@@ -22,7 +22,7 @@ class AHS_BERT(pl.LightningModule):
         super(AHS_BERT, self).__init__()
 
         #Pretrained model
-        self.bert = BertModel.from_pretrained('bert-base-cased')
+        self.bert = BertModel.from_pretrained('bert-base-uncased')
 
         #Replacement Layer/Finetuner
         self.regressor = nn.Sequential(
@@ -33,7 +33,7 @@ class AHS_BERT(pl.LightningModule):
         vars = self.bert(input_ids=input_ids, attention_mask=att_mask)
         target_output = vars[1]
         outputs = self.regressor(target_output)
-        return outputs
+        return outputs.squeeze(-1)
 
     def training_step(self, batch, batch_idx):
         # batch
@@ -41,7 +41,7 @@ class AHS_BERT(pl.LightningModule):
         # fwd
         y_pred = self.forward(input_ids, attention_mask)
         # loss
-        loss = F.mse_loss(y_pred, target)
+        loss = F.mse_loss(y_pred.float(), target.float())
         tensorboard_logs = {'train_loss': loss}
         return {'loss': loss, 'log': tensorboard_logs}
 
@@ -51,7 +51,7 @@ class AHS_BERT(pl.LightningModule):
         # fwd
         y_pred = self.forward(input_ids, attention_mask)
         # loss
-        return {'val_loss':  F.mse_loss(y_pred, target)}
+        return {'val_loss':  F.mse_loss(y_pred.float(), target.float())}
 
     def validation_end(self, outputs):
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
@@ -64,7 +64,7 @@ class AHS_BERT(pl.LightningModule):
         # fwd
         y_pred = self.forward(input_ids, attention_mask)
         # loss
-        return {'val_loss': F.mse_loss(y_pred, target)}
+        return {'val_loss': F.mse_loss(y_pred.float(), target.float())}
 
     def test_end(self, outputs):
         avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
@@ -92,9 +92,6 @@ df = df[:25000]
 x_train, x_temp, y_train, y_temp = train_test_split(df['comment_text'], df['toxicity'], random_state=1111, test_size=0.3)
 x_validation, x_test, y_validation, y_test = train_test_split(x_temp, y_temp, random_state=1111, test_size=0.5)
 
-# import BERT-base pretrained model
-bert = BertModel.from_pretrained('bert-base-uncased')
-
 # Load the BERT tokenizer
 tokenizer = BertTokenizerFast.from_pretrained('bert-base-uncased')
 
@@ -104,18 +101,21 @@ seq_len = [len(i.split()) for i in x_train]
 pd.Series(seq_len).hist(bins = 30)
 plt.show()
 
-tokens_train = tokenizer(x_train.tolist(), padding='max_length', truncation=True, max_length = 150)
-tokens_validation = tokenizer(x_validation.tolist(), padding='max_length', truncation=True, max_length = 150)
-tokens_test = tokenizer(x_test.tolist(), padding='max_length', truncation=True, max_length = 150)
+tokens_train = tokenizer(x_train.tolist(), padding='max_length', truncation=True,
+                         max_length=150, return_token_type_ids=False)
+tokens_validation = tokenizer(x_validation.tolist(), padding='max_length', truncation=True,
+                              max_length=150, return_token_type_ids=False)
+tokens_test = tokenizer(x_test.tolist(), padding='max_length', truncation=True,
+                        max_length=150, return_token_type_ids=False)
 
 #Declare model
 model = AHS_BERT()
 
 #Load Datasets
 training_DL = model.configure_dataloaders(tokens_train.data['input_ids'], tokens_train.data['attention_mask'],
-                                           y_train.to_numpy(), 1)
+                                           y_train.to_numpy().astype(float), 1)
 validation_DL = model.configure_dataloaders(tokens_validation.data['input_ids'], tokens_validation.data['attention_mask'],
-                                           y_validation.to_numpy(), 1)
+                                           y_validation.to_numpy().astype(float), 1)
 
 #Being Lightning Trainer
 trainer = pl.Trainer(gpus=1)
