@@ -117,6 +117,6 @@ training_DL = model.configure_dataloaders(tokens_train.data['input_ids'], tokens
 validation_DL = model.configure_dataloaders(tokens_validation.data['input_ids'], tokens_validation.data['attention_mask'],
                                            y_validation.to_numpy().astype(float), 1)
 
-#Being Lightning Trainer
-trainer = pl.Trainer(gpus=1)
+#Begin Lightning Trainer
+trainer = pl.Trainer(gpus=1, max_epochs=1)
 trainer.fit(model, training_DL, validation_DL)
