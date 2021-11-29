@@ -3,6 +3,7 @@ import pandas as pd
 import nltk
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report
@@ -18,15 +19,11 @@ from transformers import get_linear_schedule_with_warmup
 
 
 class AHS_BERT(pl.LightningModule):
-    def __init__(self, drop_rate=0.2, activation=nn.ReLU(), freeze_bert=True):
+    def __init__(self, drop_rate=0.2):
         super(AHS_BERT, self).__init__()
 
         #Pretrained model
         self.bert = BertModel.from_pretrained('bert-base-cased')
-
-        if freeze_bert is True:
-            for param in self.bert.parameters():
-                param.requires_grad = False
 
         #Replacement Layer/Finetuner
         self.regressor = nn.Sequential(
@@ -34,28 +31,65 @@ class AHS_BERT(pl.LightningModule):
             nn.Linear(768, 1))
 
     def forward(self, input_ids, att_mask):
-        vars = self.bert(input_ids=input_ids,
-                               attention_mask=att_mask)
+        vars = self.bert(input_ids=input_ids, attention_mask=att_mask)
         target_output = vars[1]
         outputs = self.regressor(target_output)
         return outputs
 
-    def training_step(self, batch, batch_num):
+    def training_step(self, batch, batch_idx):
         # batch
-        input_ids, attention_mask, token_type_ids, target = batch
+        input_ids, attention_mask, target = batch
 
         # fwd
-        y_pred, attn = self.forward(input_ids, attention_mask, token_type_ids)
+        y_pred = self.forward(input_ids, attention_mask)
 
         # loss
-        loss = metrics.mean_squared_error(y_true=target,y_pred=y_pred)
+        loss = F.mse_loss(y_pred, target)
 
         # logs
         tensorboard_logs = {'train_loss': loss}
         return {'loss': loss, 'log': tensorboard_logs}
 
+    def validation_step(self, batch, batch_idx):
+        # batch
+        input_ids, attention_mask, target = batch
+
+        # fwd
+        y_pred = self.forward(input_ids, attention_mask)
+
+        # loss
+        loss = F.mse_loss(y_pred, target)
+
+        # acc
+        validation_accuracy = metrics.r2_score(target.cpu(), y_pred.cpu())
+        validation_accuracy = torch.tensor(validation_accuracy)
+
+        return {'val_loss': loss, 'val_acc': validation_accuracy}
+
+    def validation_end(self, outputs):
+        avg_loss = torch.stack([x['val_loss'] for x in outputs]).mean()
+        avg_val_acc = torch.stack([x['val_acc'] for x in outputs]).mean()
+
+        tensorboard_logs = {'val_loss': avg_loss, 'avg_val_acc': avg_val_acc}
+        return {'avg_val_loss': avg_loss, 'progress_bar': tensorboard_logs}
+
+    def test_step(self, batch, batch_idx):
+        input_ids, attention_mask, target = batch
+
+        y_pred = self.forward(input_ids, attention_mask)
+
+        test_acc = metrics.r2_score(y_pred.cpu(), target.cpu())
+
+        return {'test_acc': torch.tensor(test_acc)}
+
+    def test_end(self, outputs):
+        avg_test_acc = torch.stack([x['test_acc'] for x in outputs]).mean()
+
+        tensorboard_logs = {'avg_test_acc': avg_test_acc}
+        return {'avg_test_acc': avg_test_acc, 'log': tensorboard_logs, 'progress_bar': tensorboard_logs}
+
     def configure_optimizers(self):
-        return torch.optim.Adam(self.parameters(), lr=3e-4)
+        return torch.optim.Adam(self.parameters(), lr=1e-4)
 
     def configure_dataloaders(self, input_ids, att_masks, targets, batch_size):
         id_tensor = torch.tensor(input_ids)
@@ -69,7 +103,7 @@ class AHS_BERT(pl.LightningModule):
 
 df_all = pd.read_csv("all_data.csv")
 df = df_all[['comment_text', 'toxicity']]
-df = df[:50000]
+df = df[:25000]
 x_train, x_temp, y_train, y_temp = train_test_split(df['comment_text'], df['toxicity'],
                                                                     random_state=1111,
                                                                     test_size=0.3)
@@ -95,27 +129,13 @@ tokens_train = tokenizer(x_train.tolist(), padding='max_length', truncation=True
 tokens_validation = tokenizer(x_validation.tolist(), padding='max_length', truncation=True, max_length = 150)
 tokens_test = tokenizer(x_test.tolist(), padding='max_length', truncation=True, max_length = 150)
 
-if torch.cuda.is_available():
-    device = torch.device("cuda")
-    print("GPU")
-else:
-    raise NotImplementedError
-    # device = torch.device("cpu")
-    # print("CPU")
-
 model = AHS_BERT()
-#Push model to GPU
-model.to(device)
+
 
 training_DL = model.configure_dataloaders(tokens_train.data['input_ids'], tokens_train.data['attention_mask'],
-                                           y_train.to_numpy(), 32)
+                                           y_train.to_numpy(), 1)
 validation_DL = model.configure_dataloaders(tokens_validation.data['input_ids'], tokens_validation.data['attention_mask'],
-                                           y_validation.to_numpy(), 32)
-#Define loss function
-loss = nn.MSELoss()
-
-#Define optimizer - Using Stochastic Gradient Descent
-optimizer = optim.SGD(model.parameters(), lr=0.01)
+                                           y_validation.to_numpy(), 1)
 
 #Being Lightning Trainer
 trainer = pl.Trainer(gpus=1)
