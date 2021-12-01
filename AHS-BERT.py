@@ -118,6 +118,8 @@ test_DL = model.configure_dataloaders(tokens_test.data['input_ids'], tokens_test
                                            y_test.to_numpy().astype(float), 32, shuffle=False)
 
 #Begin Lightning Trainer
-trainer = pl.Trainer(gpus=1, max_epochs=5)
+trainer = pl.Trainer(gpus=1, max_epochs=3)
 trainer.fit(model, training_DL, validation_DL)
-trainer.test(dataloaders=test_DL)
+#ckpt_file_path = r'C:\Users\Alexander Mays\OneDrive\Documents\GitHub\COMP551-F21-Final\lightning_logs\version_51\checkpoints\epoch=4-step=54689.ckpt'
+#model = AHS_BERT.load_from_checkpoint(ckpt_file_path)
+trainer.test(model=model, dataloaders=test_DL)
